@@ -2,4 +2,3 @@ python-telegram-bot==20.7
 Flask==2.3.3
 python-dotenv==1.0.0
 gunicorn==21.2.0
-python-pptx==0.6.21
