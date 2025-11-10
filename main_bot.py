@@ -3,7 +3,6 @@ import logging
 import csv
 import io
 import json
-import zipfile
 from datetime import datetime
 from flask import Flask, render_template_string
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -33,6 +32,17 @@ QUESTIONS = [
     "Программа просвещения родителей – это новый дополнительный пункт в ФОП ДО",
     "Тематика и формы взаимодействия и педагогического просвещения родителей, которые содержит Программа, – примерные. Педагоги могут их самостоятельно преобразовывать."
 ]
+
+# Эталонные ответы
+CORRECT_ANSWERS = {
+    0: "no",   # Вопрос 1 - "нет"
+    1: "no",   # Вопрос 2 - "нет"  
+    2: "yes",  # Вопрос 3 - "да"
+    3: "yes",  # Вопрос 4 - "да"
+    4: "no",   # Вопрос 5 - "нет"
+    5: "no",   # Вопрос 6 - "нет"
+    6: "yes"   # Вопрос 7 - "да"
+}
 
 # Хранилище результатов
 class ResultsStorage:
@@ -104,7 +114,7 @@ class ResultsStorage:
         writer = csv.writer(output)
         
         # Заголовок
-        writer.writerow(["Question Number", "Question Text", "Yes", "No", "Total", "Yes %", "No %"])
+        writer.writerow(["Question Number", "Question Text", "Correct Answer", "Yes", "No", "Total", "Yes %", "No %", "Correct %"])
         
         # Данные по вопросам
         for i, question in enumerate(QUESTIONS):
@@ -113,14 +123,21 @@ class ResultsStorage:
             yes_percent = (stats["yes"] / total * 100) if total > 0 else 0
             no_percent = (stats["no"] / total * 100) if total > 0 else 0
             
+            # Определяем процент правильных ответов
+            correct_answer = "Да" if CORRECT_ANSWERS[i] == "yes" else "Нет"
+            correct_count = stats["yes"] if CORRECT_ANSWERS[i] == "yes" else stats["no"]
+            correct_percent = (correct_count / total * 100) if total > 0 else 0
+            
             writer.writerow([
                 f"Q{i+1}",
                 question,
+                correct_answer,
                 stats["yes"],
                 stats["no"],
                 total,
                 f"{yes_percent:.1f}%",
-                f"{no_percent:.1f}%"
+                f"{no_percent:.1f}%",
+                f"{correct_percent:.1f}%"
             ])
         
         # Пустая строка
@@ -145,94 +162,239 @@ class ResultsStorage:
         
         return output.getvalue()
     
-    def export_to_simple_html(self):
-        """Создание упрощенного HTML отчета без сложных графиков"""
-        total_answers = sum(sum(stats.values()) for stats in self.results.values())
-        total_participants = len(self.user_info)
-        
-        html_content = f"""
+    def export_to_html_report(self):
+        """Создание интерактивного HTML отчета с графиками"""
+        html_template = """
         <!DOCTYPE html>
         <html>
         <head>
             <title>Результаты опроса - Практикум для воспитателей</title>
             <meta charset="utf-8">
+            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
-                body {{ font-family: Arial, sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; }}
-                .header {{ background: #4CAF50; color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; }}
-                .stats-card {{ background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 15px; }}
-                .question-card {{ background: #f8f9fa; padding: 12px; border-radius: 6px; margin: 10px 0; border-left: 4px solid #007bff; }}
-                .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 15px 0; }}
-                .summary-item {{ background: white; padding: 12px; border-radius: 6px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
-                .percentage {{ font-size: 20px; font-weight: bold; color: #007bff; }}
-                .progress-bar {{ background: #e0e0e0; border-radius: 5px; margin: 5px 0; }}
-                .progress {{ background: #4CAF50; height: 20px; border-radius: 5px; }}
+                body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+                .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; }
+                .stats-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+                .question-card { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #007bff; }
+                .chart-container { height: 300px; margin: 20px 0; }
+                .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
+                .summary-item { background: white; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+                .percentage { font-size: 24px; font-weight: bold; color: #007bff; }
+                .correct-answer { color: #28a745; font-weight: bold; }
+                .incorrect-answer { color: #dc3545; }
+                .comparison { background: #e8f5e8; padding: 10px; border-radius: 5px; margin: 10px 0; }
             </style>
         </head>
         <body>
             <div class="header">
                 <h1>📊 Результаты опроса</h1>
-                <p>Практикум для воспитателей - {datetime.now().strftime("%d.%m.%Y %H:%M")}</p>
-                <p>Участников: {total_participants} | Ответов: {total_answers}</p>
+                <p>Практикум для воспитателей - {{ date }}</p>
+                <p>Участников: {{ total_participants }} | Ответов: {{ total_answers }}</p>
             </div>
 
             <div class="summary-grid">
                 <div class="summary-item">
-                    <div class="percentage">{total_participants}</div>
+                    <div class="percentage">{{ total_participants }}</div>
                     <div>Участников</div>
                 </div>
                 <div class="summary-item">
-                    <div class="percentage">{total_answers}</div>
+                    <div class="percentage">{{ total_answers }}</div>
                     <div>Всего ответов</div>
                 </div>
                 <div class="summary-item">
-                    <div class="percentage">{len(QUESTIONS)}</div>
+                    <div class="percentage">{{ avg_correct_percent }}%</div>
+                    <div>Средний % правильных</div>
+                </div>
+                <div class="summary-item">
+                    <div class="percentage">{{ questions_count }}</div>
                     <div>Вопросов</div>
                 </div>
             </div>
+
+            <div class="stats-card">
+                <h2>📈 Общая статистика по вопросам</h2>
+                <div class="chart-container">
+                    <canvas id="overallChart"></canvas>
+                </div>
+            </div>
+
+            {% for i in range(questions_count) %}
+            <div class="stats-card">
+                <h3>Вопрос {{ i+1 }}</h3>
+                <div class="question-card">
+                    <p><strong>{{ questions[i] }}</strong></p>
+                    <p class="correct-answer">✅ Правильный ответ: {{ correct_answers[i] }}</p>
+                </div>
+                
+                <div class="comparison">
+                    <p><strong>Сравнение с эталоном:</strong></p>
+                    <p>Правильных ответов: {{ correct_counts[i] }} ({{ correct_percents[i] }}%)</p>
+                    <p>Неправильных ответов: {{ incorrect_counts[i] }} ({{ incorrect_percents[i] }}%)</p>
+                </div>
+                
+                <div class="chart-container">
+                    <canvas id="chart{{ i }}"></canvas>
+                </div>
+                <p><strong>Результаты:</strong> ✅ Да: {{ results[i].yes }} ({{ yes_percents[i] }}%) | ❌ Нет: {{ results[i].no }} ({{ no_percents[i] }}%)</p>
+            </div>
+            {% endfor %}
+
+            <script>
+                // Общая статистика
+                const overallCtx = document.getElementById('overallChart').getContext('2d');
+                new Chart(overallCtx, {
+                    type: 'bar',
+                    data: {
+                        labels: {{ question_numbers|tojson }},
+                        datasets: [
+                            {
+                                label: '✅ Да',
+                                data: {{ yes_data|tojson }},
+                                backgroundColor: '#28a745'
+                            },
+                            {
+                                label: '❌ Нет',
+                                data: {{ no_data|tojson }},
+                                backgroundColor: '#dc3545'
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: 'Распределение ответов по вопросам'
+                            }
+                        },
+                        scales: {
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Номер вопроса'
+                                }
+                            },
+                            y: {
+                                title: {
+                                    display: true,
+                                    text: 'Количество ответов'
+                                },
+                                beginAtZero: true
+                            }
+                        }
+                    }
+                });
+
+                // Графики для каждого вопроса
+                {% for i in range(questions_count) %}
+                const ctx{{ i }} = document.getElementById('chart{{ i }}').getContext('2d');
+                new Chart(ctx{{ i }}, {
+                    type: 'doughnut',
+                    data: {
+                        labels: ['✅ Да ({{ yes_percents[i] }}%)', '❌ Нет ({{ no_percents[i] }}%)'],
+                        datasets: [{
+                            data: [{{ results[i].yes }}, {{ results[i].no }}],
+                            backgroundColor: ['#28a745', '#dc3545']
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            legend: {
+                                position: 'bottom'
+                            },
+                            title: {
+                                display: true,
+                                text: 'Вопрос {{ i+1 }}'
+                            }
+                        }
+                    }
+                });
+                {% endfor %}
+            </script>
+        </body>
+        </html>
         """
         
-        for i, question in enumerate(QUESTIONS):
+        total_answers = sum(sum(stats.values()) for stats in self.results.values())
+        total_participants = len(self.user_info)
+        
+        # Подготавливаем данные для графиков
+        question_numbers = [f"Вопрос {i+1}" for i in range(len(QUESTIONS))]
+        yes_data = [self.results[i]["yes"] for i in range(len(QUESTIONS))]
+        no_data = [self.results[i]["no"] for i in range(len(QUESTIONS))]
+        
+        yes_percents = []
+        no_percents = []
+        correct_answers = []
+        correct_counts = []
+        incorrect_counts = []
+        correct_percents = []
+        incorrect_percents = []
+        
+        total_correct_percent = 0
+        
+        for i in range(len(QUESTIONS)):
             stats = self.results[i]
             total = stats["yes"] + stats["no"]
             yes_percent = (stats["yes"] / total * 100) if total > 0 else 0
             no_percent = (stats["no"] / total * 100) if total > 0 else 0
             
-            html_content += f"""
-            <div class="stats-card">
-                <h3>Вопрос {i+1}</h3>
-                <div class="question-card">
-                    <p><strong>{question}</strong></p>
-                </div>
-                <p><strong>Результаты:</strong></p>
-                <p>✅ Да: {stats['yes']} ({yes_percent:.1f}%)</p>
-                <div class="progress-bar">
-                    <div class="progress" style="width: {yes_percent}%"></div>
-                </div>
-                <p>❌ Нет: {stats['no']} ({no_percent:.1f}%)</p>
-                <div class="progress-bar">
-                    <div class="progress" style="width: {no_percent}%; background: #f44336;"></div>
-                </div>
-                <p><em>Всего ответов: {total}</em></p>
-            </div>
-            """
+            yes_percents.append(f"{yes_percent:.1f}")
+            no_percents.append(f"{no_percent:.1f}")
+            
+            # Определяем правильный ответ и статистику
+            correct_answer_text = "Да" if CORRECT_ANSWERS[i] == "yes" else "Нет"
+            correct_answers.append(correct_answer_text)
+            
+            correct_count = stats["yes"] if CORRECT_ANSWERS[i] == "yes" else stats["no"]
+            incorrect_count = total - correct_count
+            correct_percent = (correct_count / total * 100) if total > 0 else 0
+            incorrect_percent = (incorrect_count / total * 100) if total > 0 else 0
+            
+            correct_counts.append(correct_count)
+            incorrect_counts.append(incorrect_count)
+            correct_percents.append(f"{correct_percent:.1f}")
+            incorrect_percents.append(f"{incorrect_percent:.1f}")
+            
+            total_correct_percent += correct_percent
         
-        html_content += """
-        </body>
-        </html>
-        """
+        # Средний процент правильных ответов
+        avg_correct_percent = total_correct_percent / len(QUESTIONS) if len(QUESTIONS) > 0 else 0
         
-        return html_content
+        return render_template_string(
+            html_template,
+            date=datetime.now().strftime("%d.%m.%Y %H:%M"),
+            total_participants=total_participants,
+            total_answers=total_answers,
+            avg_correct_percent=f"{avg_correct_percent:.1f}",
+            questions_count=len(QUESTIONS),
+            questions=QUESTIONS,
+            results=self.results,
+            question_numbers=question_numbers,
+            yes_data=yes_data,
+            no_data=no_data,
+            yes_percents=yes_percents,
+            no_percents=no_percents,
+            correct_answers=correct_answers,
+            correct_counts=correct_counts,
+            incorrect_counts=incorrect_counts,
+            correct_percents=correct_percents,
+            incorrect_percents=incorrect_percents
+        )
     
     def export_to_text_report(self):
         """Создание текстового отчета для отправки в Telegram"""
         total_answers = sum(sum(stats.values()) for stats in self.results.values())
         total_participants = len(self.user_info)
         
-        text = f"📊 ОТЧЕТ ОПРОСА\n"
+        text = f"📊 ОТЧЕТ ОПРОСА С ЭТАЛОННЫМИ ОТВЕТАМИ\n"
         text += f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
         text += f"Участников: {total_participants}\n"
         text += f"Всего ответов: {total_answers}\n"
         text += f"Вопросов: {len(QUESTIONS)}\n\n"
+        
+        total_correct_percent = 0
         
         for i, question in enumerate(QUESTIONS):
             stats = self.results[i]
@@ -240,11 +402,23 @@ class ResultsStorage:
             yes_percent = (stats["yes"] / total * 100) if total > 0 else 0
             no_percent = (stats["no"] / total * 100) if total > 0 else 0
             
+            # Определяем правильный ответ и статистику
+            correct_answer = "✅ ДА" if CORRECT_ANSWERS[i] == "yes" else "❌ НЕТ"
+            correct_count = stats["yes"] if CORRECT_ANSWERS[i] == "yes" else stats["no"]
+            correct_percent = (correct_count / total * 100) if total > 0 else 0
+            total_correct_percent += correct_percent
+            
             text += f"ВОПРОС {i+1}:\n"
             text += f"{question}\n"
             text += f"✅ Да: {stats['yes']} ({yes_percent:.1f}%)\n"
             text += f"❌ Нет: {stats['no']} ({no_percent:.1f}%)\n"
-            text += f"Всего: {total}\n\n"
+            text += f"📗 Правильный ответ: {correct_answer}\n"
+            text += f"🎯 Правильных ответов: {correct_count} ({correct_percent:.1f}%)\n"
+            text += f"📊 Всего ответов: {total}\n\n"
+        
+        # Средний процент правильных ответов
+        avg_correct_percent = total_correct_percent / len(QUESTIONS) if len(QUESTIONS) > 0 else 0
+        text += f"📈 СРЕДНИЙ ПРОЦЕНТ ПРАВИЛЬНЫХ ОТВЕТОВ: {avg_correct_percent:.1f}%\n"
         
         return text
 
@@ -275,7 +449,7 @@ def home():
         
         <div class="status">
             <p><strong>Статус:</strong> ✅ Активен</p>
-            <p><strong>Версия:</strong> Упрощенная с текстовыми отчетами</p>
+            <p><strong>Версия:</strong> С эталонными ответами</p>
             <p><strong>Количество вопросов:</strong> {{ questions_count }}</p>
             <p><strong>Участников:</strong> {{ participants }}</p>
             <p><strong>Всего ответов:</strong> {{ total_answers }}</p>
@@ -286,11 +460,11 @@ def home():
         <div class="export-buttons">
             <a href="/export/html" class="export-btn" target="_blank">
                 <strong>🌐 HTML Отчет</strong><br>
-                Упрощенный HTML отчет
+                Полный отчет с графиками
             </a>
             <a href="/export/csv" class="export-btn" download>
                 <strong>📊 Google Sheets</strong><br>
-                CSV для импорта в таблицы
+                CSV с эталонными ответами
             </a>
             <a href="/export/text" class="export-btn" target="_blank">
                 <strong>📝 Текст</strong><br>
@@ -317,7 +491,7 @@ def home():
 @app.route('/export/html')
 def export_html():
     """Экспорт в HTML отчет"""
-    html_content = results_storage.export_to_simple_html()
+    html_content = results_storage.export_to_html_report()
     return html_content
 
 @app.route('/export/text')
@@ -542,6 +716,18 @@ async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats_text += f"• Всего ответов: {total_answers}\n"
     stats_text += f"• Вопросов: {len(QUESTIONS)}\n\n"
     
+    # Статистика по правильным ответам
+    total_correct_percent = 0
+    for i in range(len(QUESTIONS)):
+        stats = results_storage.results[i]
+        total = stats["yes"] + stats["no"]
+        correct_count = stats["yes"] if CORRECT_ANSWERS[i] == "yes" else stats["no"]
+        correct_percent = (correct_count / total * 100) if total > 0 else 0
+        total_correct_percent += correct_percent
+        
+    avg_correct_percent = total_correct_percent / len(QUESTIONS) if len(QUESTIONS) > 0 else 0
+    stats_text += f"📈 <b>Средний % правильных ответов:</b> {avg_correct_percent:.1f}%\n\n"
+    
     # Прогресс по вопросам
     stats_text += "<b>Прогресс по вопросам:</b>\n"
     for i in range(len(QUESTIONS)):
@@ -571,7 +757,7 @@ async def handle_admin_actions(update: Update, context: ContextTypes.DEFAULT_TYP
     
     if action == "admin_stats":
         # Показываем детальную статистику
-        stats_text = "📊 <b>Детальная статистика:</b>\n\n"
+        stats_text = "📊 <b>Детальная статистика с эталонными ответами:</b>\n\n"
         
         for i in range(len(QUESTIONS)):
             stats = results_storage.results[i]
@@ -579,9 +765,16 @@ async def handle_admin_actions(update: Update, context: ContextTypes.DEFAULT_TYP
             yes_percent = (stats["yes"] / total * 100) if total > 0 else 0
             no_percent = (stats["no"] / total * 100) if total > 0 else 0
             
+            # Определяем правильный ответ и статистику
+            correct_answer = "✅ ДА" if CORRECT_ANSWERS[i] == "yes" else "❌ НЕТ"
+            correct_count = stats["yes"] if CORRECT_ANSWERS[i] == "yes" else stats["no"]
+            correct_percent = (correct_count / total * 100) if total > 0 else 0
+            
             stats_text += f"<b>Вопрос {i + 1}:</b>\n"
             stats_text += f"✅ Да: {stats['yes']} ({yes_percent:.1f}%)\n"
             stats_text += f"❌ Нет: {stats['no']} ({no_percent:.1f}%)\n"
+            stats_text += f"🎯 Правильный ответ: {correct_answer}\n"
+            stats_text += f"📗 Правильных: {correct_count} ({correct_percent:.1f}%)\n"
             stats_text += f"👥 Всего: {total}\n\n"
         
         await query.edit_message_text(stats_text, parse_mode='HTML')
@@ -598,7 +791,7 @@ async def handle_admin_actions(update: Update, context: ContextTypes.DEFAULT_TYP
                 chat_id=user_id,
                 document=csv_file,
                 filename=csv_file.name,
-                caption="📥 <b>Результаты опроса в CSV формате</b>\n\nИмпортируйте в Google Sheets для анализа.",
+                caption="📥 <b>Результаты опроса в CSV формате</b>\n\nС эталонными ответами для анализа.",
                 parse_mode='HTML'
             )
         except Exception as e:
