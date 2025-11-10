@@ -308,7 +308,6 @@ class ResultsStorage:
             yes_percents.append(f"{yes_percent:.1f}")
             no_percents.append(f"{no_percent:.1f}")
         
-        from flask import render_template_string
         return render_template_string(
             html_template,
             date=datetime.now().strftime("%d.%m.%Y %H:%M"),
@@ -324,118 +323,6 @@ class ResultsStorage:
             yes_percents=yes_percents,
             no_percents=no_percents
         )
-    
-    def export_to_pptx(self):
-        """Создание простой PowerPoint презентации с результатами"""
-        try:
-            from pptx import Presentation
-            from pptx.util import Inches, Pt
-            from pptx.enum.text import PP_ALIGN
-            from pptx.chart.data import ChartData
-            from pptx.enum.chart import XL_CHART_TYPE
-            
-            prs = Presentation()
-            
-            # Титульный слайд
-            slide_layout = prs.slide_layouts[0]
-            slide = prs.slides.add_slide(slide_layout)
-            title = slide.shapes.title
-            subtitle = slide.placeholders[1]
-            
-            title.text = "Результаты опроса"
-            subtitle.text = f"Практикум для воспитателей\n{datetime.now().strftime('%d.%m.%Y')}\nУчастников: {len(self.user_info)}"
-            
-            # Слайд с общей статистикой
-            slide_layout = prs.slide_layouts[5]
-            slide = prs.slides.add_slide(slide_layout)
-            title = slide.shapes.title
-            title.text = "Общая статистика"
-            
-            # Добавляем текстовую статистику
-            left = Inches(0.5)
-            top = Inches(1.5)
-            width = Inches(9)
-            height = Inches(1)
-            
-            textbox = slide.shapes.add_textbox(left, top, width, height)
-            text_frame = textbox.text_frame
-            text_frame.word_wrap = True
-            
-            total_answers = sum(sum(stats.values()) for stats in self.results.values())
-            p = text_frame.paragraphs[0]
-            p.text = f"Всего участников: {len(self.user_info)}\nВсего ответов: {total_answers}\nВопросов: {len(QUESTIONS)}"
-            p.font.size = Pt(18)
-            
-            # Слайды для каждого вопроса
-            for i, question in enumerate(QUESTIONS):
-                slide = prs.slides.add_slide(slide_layout)
-                title = slide.shapes.title
-                title.text = f"Вопрос {i+1}"
-                
-                # Текст вопроса
-                left = Inches(0.5)
-                top = Inches(1)
-                width = Inches(9)
-                height = Inches(1.5)
-                
-                textbox = slide.shapes.add_textbox(left, top, width, height)
-                text_frame = textbox.text_frame
-                text_frame.word_wrap = True
-                
-                p = text_frame.paragraphs[0]
-                p.text = question
-                p.font.size = Pt(14)
-                
-                # Статистика
-                top = Inches(2.5)
-                height = Inches(1)
-                
-                stats_box = slide.shapes.add_textbox(left, top, width, height)
-                stats_frame = stats_box.text_frame
-                
-                stats = self.results[i]
-                total = stats["yes"] + stats["no"]
-                yes_percent = (stats["yes"] / total * 100) if total > 0 else 0
-                no_percent = (stats["no"] / total * 100) if total > 0 else 0
-                
-                p = stats_frame.paragraphs[0]
-                p.text = f"✅ Да: {stats['yes']} ({yes_percent:.1f}%)\n❌ Нет: {stats['no']} ({no_percent:.1f}%)"
-                p.font.size = Pt(16)
-                
-                # Простая круговая диаграмма (текстовая)
-                top = Inches(4)
-                height = Inches(1)
-                
-                chart_box = slide.shapes.add_textbox(left, top, width, height)
-                chart_frame = chart_box.text_frame
-                
-                p = chart_frame.paragraphs[0]
-                bar_length = 20
-                yes_bars = int(stats["yes"] / total * bar_length) if total > 0 else 0
-                no_bars = bar_length - yes_bars
-                
-                p.text = f"График: [{'█' * yes_bars}{'░' * no_bars}]"
-                p.font.size = Pt(12)
-            
-            # Сохраняем в bytes
-            pptx_buffer = io.BytesIO()
-            prs.save(pptx_buffer)
-            pptx_buffer.seek(0)
-            return pptx_buffer
-            
-        except ImportError:
-            # Если библиотека pptx не установлена, создаем текстовый файл с инструкцией
-            error_text = """
-            Для создания PowerPoint презентаций необходимо установить библиотеку python-pptx.
-            
-            Добавьте в requirements.txt:
-            python-pptx==0.6.21
-            
-            И перезапустите приложение.
-            """
-            buffer = io.BytesIO(error_text.encode('utf-8'))
-            buffer.name = "INSTALL_INSTRUCTIONS.txt"
-            return buffer
 
 results_storage = ResultsStorage()
 
@@ -481,10 +368,6 @@ def home():
                 <strong>📊 Google Sheets</strong><br>
                 CSV для импорта в таблицы
             </a>
-            <a href="/export/pptx" class="export-btn" download>
-                <strong>📈 PowerPoint</strong><br>
-                Презентация с результатами
-            </a>
         </div>
 
         <div class="status">
@@ -521,26 +404,6 @@ def export_csv():
     )
     return response
 
-@app.route('/export/pptx')
-def export_pptx():
-    """Экспорт в PowerPoint"""
-    pptx_buffer = results_storage.export_to_pptx()
-    
-    if hasattr(pptx_buffer, 'name') and pptx_buffer.name == "INSTALL_INSTRUCTIONS.txt":
-        return app.response_class(
-            response=pptx_buffer.getvalue(),
-            status=200,
-            mimetype='text/plain',
-            headers={'Content-Disposition': 'attachment; filename=install_instructions.txt'}
-        )
-    else:
-        return app.response_class(
-            response=pptx_buffer.getvalue(),
-            status=200,
-            mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation',
-            headers={'Content-Disposition': f'attachment; filename=survey_results_{datetime.now().strftime("%Y%m%d_%H%M")}.pptx'}
-        )
-
 @app.route('/health')
 def health():
     """Эндпоинт для проверки здоровья приложения"""
@@ -553,7 +416,17 @@ def health():
         "admin_ids": admin_ids
     }
 
-# ... (остальной код бота остается без изменений, только обновляем админ-клавиатуру)
+def is_admin(user_id: int) -> bool:
+    """Проверяет, является ли пользователь администратором"""
+    return user_id in admin_ids
+
+def get_question_keyboard(question_id: int):
+    """Создает клавиатуру с кнопками Да/Нет для вопроса"""
+    keyboard = [
+        [InlineKeyboardButton("✅ Да", callback_data=f"q{question_id}_yes")],
+        [InlineKeyboardButton("❌ Нет", callback_data=f"q{question_id}_no")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 def get_admin_keyboard():
     """Клавиатура для админ панели"""
@@ -561,13 +434,195 @@ def get_admin_keyboard():
         [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton("📥 Выгрузить CSV", callback_data="admin_export")],
         [InlineKeyboardButton("🌐 HTML Отчет", callback_data="admin_html")],
-        [InlineKeyboardButton("📈 PowerPoint", callback_data="admin_pptx")],
         [InlineKeyboardButton("🔄 Сбросить результаты", callback_data="admin_reset")],
         [InlineKeyboardButton("❌ Закрыть", callback_data="admin_close")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# Добавляем обработчики для новых кнопок экспорта
+def get_continue_keyboard(next_question_id: int):
+    """Клавиатура для продолжения опроса"""
+    keyboard = [
+        [InlineKeyboardButton("➡️ Следующий вопрос", callback_data=f"continue_{next_question_id}")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def get_question_text(question_id: int, user_id: int):
+    """Форматирует текст вопроса"""
+    progress = results_storage.get_completion_percentage(user_id)
+    completed = len(results_storage.get_user_progress(user_id))
+    
+    text = (
+        f"<b>Вопрос {question_id + 1}/{len(QUESTIONS)}</b>\n\n"
+        f"{QUESTIONS[question_id]}\n\n"
+        f"📊 <b>Прогресс:</b> {completed}/{len(QUESTIONS)} ({progress:.0f}%)"
+    )
+    
+    return text
+
+def get_answer_confirmation_text(question_id: int, answer: str, user_id: int):
+    """Форматирует текст подтверждения ответа"""
+    answer_text = "✅ Да" if answer == "yes" else "❌ Нет"
+    progress = results_storage.get_completion_percentage(user_id)
+    completed = len(results_storage.get_user_progress(user_id))
+    
+    text = (
+        f"<b>Вопрос {question_id + 1}/{len(QUESTIONS)}</b>\n\n"
+        f"{QUESTIONS[question_id]}\n\n"
+        f"<b>Ваш ответ:</b> {answer_text}\n\n"
+        f"📈 <b>Прогресс:</b> {completed}/{len(QUESTIONS)} ({progress:.0f}%)"
+    )
+    
+    return text
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отправляет приветственное сообщение и первый вопрос"""
+    user = update.effective_user
+    user_id = user.id
+    
+    # Проверяем, является ли пользователь администратором
+    if is_admin(user_id):
+        admin_text = (
+            "👑 <b>Панель администратора</b>\n\n"
+            "Вы являетесь администратором этого бота. "
+            "Администраторы не участвуют в опросе, а только управляют статистикой.\n\n"
+            "Используйте команду /admin для просмотра статистики и управления опросом."
+        )
+        await update.message.reply_text(admin_text, parse_mode='HTML')
+        return
+    
+    # Проверяем прогресс пользователя
+    completed = len(results_storage.get_user_progress(user_id))
+    progress = results_storage.get_completion_percentage(user_id)
+    
+    welcome_text = (
+        "📝 <b>Опрос практикума для воспитателей</b>\n\n"
+        f"<i>Ваш прогресс: {completed}/{len(QUESTIONS)} вопросов ({progress:.0f}%)</i>\n\n"
+        "Ответьте на вопросы, используя кнопки ниже.\n"
+        "После ответа на вопрос в чате останется сообщение с вашим ответом.\n\n"
+        "<i>Статистика доступна только администраторам</i>"
+    )
+    
+    await update.message.reply_text(
+        welcome_text,
+        parse_mode='HTML'
+    )
+    
+    # Находим следующий вопрос для пользователя
+    next_question = results_storage.get_next_question(user_id)
+    if next_question is None:
+        # Все вопросы пройдены
+        await update.message.reply_text(
+            "🎉 <b>Вы уже ответили на все вопросы опроса!</b>\nСпасибо за участие!",
+            parse_mode='HTML'
+        )
+        return
+    
+    # Отправляем первый вопрос
+    question_text = get_question_text(next_question, user_id)
+    await update.message.reply_text(
+        text=question_text,
+        reply_markup=get_question_keyboard(next_question),
+        parse_mode='HTML'
+    )
+
+async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает нажатия кнопок"""
+    query = update.callback_query
+    user = update.effective_user
+    user_id = user.id
+    
+    # Администраторы не могут участвовать в опросе
+    if is_admin(user_id):
+        await query.answer("❌ Администраторы не могут участвовать в опросе.", show_alert=True)
+        return
+        
+    await query.answer()
+    
+    data = query.data
+    question_id = int(data[1])
+    answer = data.split("_")[1]
+    
+    # Обновляем результаты
+    success = results_storage.add_vote(question_id, answer, user_id, user.username, user.first_name)
+    
+    if not success:
+        await query.answer("❌ Произошла ошибка при сохранении ответа.", show_alert=True)
+        return
+    
+    # Удаляем сообщение с вопросом (чтобы не было дублирования)
+    await query.delete_message()
+    
+    # Отправляем сообщение с подтверждением ответа (фиксируем ответ в чате)
+    confirmation_text = get_answer_confirmation_text(question_id, answer, user_id)
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=confirmation_text,
+        parse_mode='HTML'
+    )
+    
+    # Отправляем следующий вопрос
+    next_question = results_storage.get_next_question(user_id)
+    if next_question is not None:
+        # Ждем 1 секунду перед показом следующего вопроса
+        await context.bot.send_chat_action(chat_id=user_id, action="typing")
+        import asyncio
+        await asyncio.sleep(1)
+        
+        question_text = get_question_text(next_question, user_id)
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=question_text,
+            reply_markup=get_question_keyboard(next_question),
+            parse_mode='HTML'
+        )
+    else:
+        # Все вопросы пройдены
+        completion_text = (
+            "🎉 <b>Поздравляем! Вы завершили опрос!</b>\n\n"
+            "Спасибо за ваше время и участие. "
+            "Ваши ответы помогут улучшить образовательный процесс."
+        )
+        
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=completion_text,
+            parse_mode='HTML'
+        )
+
+async def admin_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Команда для админ панели"""
+    user_id = update.effective_user.id
+    
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Эта команда доступна только администраторам.")
+        return
+    
+    stats_text = "👑 <b>Панель администратора</b>\n\n"
+    
+    # Общая статистика
+    total_answers = sum(sum(stats.values()) for stats in results_storage.results.values())
+    total_participants = len(results_storage.user_info)
+    
+    stats_text += f"📊 <b>Общая статистика:</b>\n"
+    stats_text += f"• Участников: {total_participants}\n"
+    stats_text += f"• Всего ответов: {total_answers}\n"
+    stats_text += f"• Вопросов: {len(QUESTIONS)}\n\n"
+    
+    # Прогресс по вопросам
+    stats_text += "<b>Прогресс по вопросам:</b>\n"
+    for i in range(len(QUESTIONS)):
+        stats = results_storage.results[i]
+        total = stats["yes"] + stats["no"]
+        answered_pct = (total / total_participants * 100) if total_participants > 0 else 0
+        
+        stats_text += f"{i+1}. {total} ответов ({answered_pct:.1f}%)\n"
+    
+    await update.message.reply_text(
+        stats_text,
+        reply_markup=get_admin_keyboard(),
+        parse_mode='HTML'
+    )
+
 async def handle_admin_actions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает действия админа"""
     query = update.callback_query
@@ -636,28 +691,6 @@ async def handle_admin_actions(update: Update, context: ContextTypes.DEFAULT_TYP
             parse_mode='HTML'
         )
     
-    elif action == "admin_pptx":
-        # Выгрузка в PowerPoint
-        pptx_buffer = results_storage.export_to_pptx()
-        
-        if hasattr(pptx_buffer, 'name') and pptx_buffer.name == "INSTALL_INSTRUCTIONS.txt":
-            await context.bot.send_document(
-                chat_id=user_id,
-                document=pptx_buffer,
-                filename="install_instructions.txt",
-                caption="❌ <b>Библиотека не установлена</b>\n\nСледуйте инструкциям в файле.",
-                parse_mode='HTML'
-            )
-        else:
-            pptx_buffer.name = f"survey_results_{datetime.now().strftime('%Y%m%d_%H%M')}.pptx"
-            await context.bot.send_document(
-                chat_id=user_id,
-                document=pptx_buffer,
-                filename=pptx_buffer.name,
-                caption="📈 <b>Презентация PowerPoint</b>\n\nГотовая презентация с результатами опроса.",
-                parse_mode='HTML'
-            )
-    
     elif action == "admin_reset":
         # Подтверждение сброса
         confirm_keyboard = InlineKeyboardMarkup([
@@ -689,7 +722,73 @@ async def handle_admin_actions(update: Update, context: ContextTypes.DEFAULT_TYP
         # Закрытие админ панели
         await query.edit_message_text("👑 Панель администратора закрыта.")
 
-# ... (остальной код бота без изменений)
+async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показывает прогресс пользователя"""
+    user_id = update.effective_user.id
+    
+    # Администраторы не могут участвовать в опросе
+    if is_admin(user_id):
+        await update.message.reply_text(
+            "👑 <b>Вы администратор</b>\n\n"
+            "Администраторы не участвуют в опросе, а только управляют статистикой.\n"
+            "Используйте команду /admin для просмотра статистики.",
+            parse_mode='HTML'
+        )
+        return
+    
+    completed = len(results_storage.get_user_progress(user_id))
+    progress = results_storage.get_completion_percentage(user_id)
+    
+    progress_text = (
+        "📊 <b>Ваш прогресс:</b>\n\n"
+        f"• Завершено вопросов: {completed}/{len(QUESTIONS)}\n"
+        f"• Процент выполнения: {progress:.1f}%\n\n"
+    )
+    
+    if completed == len(QUESTIONS):
+        progress_text += "🎉 Вы ответили на все вопросы опроса!"
+        await update.message.reply_text(progress_text, parse_mode='HTML')
+    else:
+        next_question = results_storage.get_next_question(user_id)
+        progress_text += f"Следующий вопрос: {next_question + 1}/{len(QUESTIONS)}"
+        
+        # Кнопка для продолжения
+        await update.message.reply_text(
+            progress_text,
+            reply_markup=get_continue_keyboard(next_question),
+            parse_mode='HTML'
+        )
+
+async def handle_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает продолжение опроса"""
+    query = update.callback_query
+    user_id = update.effective_user.id
+    
+    # Администраторы не могут участвовать в опросе
+    if is_admin(user_id):
+        await query.answer("❌ Администраторы не могут участвовать в опросе.", show_alert=True)
+        return
+        
+    await query.answer()
+    
+    # Получаем номер вопроса из callback_data
+    question_id = int(query.data.split("_")[1])
+    
+    # Удаляем сообщение с прогрессом
+    await query.delete_message()
+    
+    # Отправляем вопрос
+    question_text = get_question_text(question_id, user_id)
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=question_text,
+        reply_markup=get_question_keyboard(question_id),
+        parse_mode='HTML'
+    )
+
+async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработчик ошибок"""
+    logging.error(f"Exception while handling an update: {context.error}")
 
 def main():
     """Основная функция запуска"""
