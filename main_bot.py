@@ -654,42 +654,61 @@ async def handle_admin_actions(update: Update, context: ContextTypes.DEFAULT_TYP
     
     elif action == "admin_export":
         # Выгрузка в CSV
-        csv_data = results_storage.export_to_csv()
-        csv_file = io.BytesIO(csv_data.encode('utf-8'))
-        csv_file.name = f"survey_results_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
-        
-        await context.bot.send_document(
-            chat_id=user_id,
-            document=csv_file,
-            filename=csv_file.name,
-            caption="📥 <b>Результаты опроса в CSV формате</b>\n\nИмпортируйте в Google Sheets для анализа.",
-            parse_mode='HTML'
-        )
-        
-        # Возвращаемся к админ панели
-        await admin_command(update, context)
+        try:
+            csv_data = results_storage.export_to_csv()
+            csv_file = io.BytesIO(csv_data.encode('utf-8'))
+            csv_file.name = f"survey_results_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
+            
+            await context.bot.send_document(
+                chat_id=user_id,
+                document=csv_file,
+                filename=csv_file.name,
+                caption="📥 <b>Результаты опроса в CSV формате</b>\n\nИмпортируйте в Google Sheets для анализа.",
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logging.error(f"Error exporting CSV: {e}")
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="❌ <b>Ошибка при создании CSV файла</b>",
+                parse_mode='HTML'
+            )
     
     elif action == "admin_html":
         # Создаем HTML отчет и отправляем как файл
-        html_content = results_storage.export_to_html_report()
-        html_file = io.BytesIO(html_content.encode('utf-8'))
-        html_file.name = f"survey_report_{datetime.now().strftime('%Y%m%d_%H%M')}.html"
-        
-        await context.bot.send_document(
-            chat_id=user_id,
-            document=html_file,
-            filename=html_file.name,
-            caption="🌐 <b>Интерактивный HTML отчет</b>\n\nОткройте в браузере для просмотра графиков.",
-            parse_mode='HTML'
-        )
-        
-        # Также отправляем ссылку на веб-версию
-        web_url = f"https://{os.environ.get('REPL_SLUG', 'your-repl')}.repl.co/export/html"
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=f"🔗 <b>Веб-версия отчета:</b>\n{web_url}",
-            parse_mode='HTML'
-        )
+        try:
+            html_content = results_storage.export_to_html_report()
+            html_file = io.BytesIO(html_content.encode('utf-8'))
+            html_file.name = f"survey_report_{datetime.now().strftime('%Y%m%d_%H%M')}.html"
+            
+            await context.bot.send_document(
+                chat_id=user_id,
+                document=html_file,
+                filename=html_file.name,
+                caption="🌐 <b>Интерактивный HTML отчет</b>\n\nОткройте в браузере для просмотра графиков.",
+                parse_mode='HTML'
+            )
+            
+            # Также отправляем ссылку на веб-версию
+            try:
+                # Получаем URL Replit
+                repl_slug = os.environ.get('REPL_SLUG', 'unknown')
+                web_url = f"https://{repl_slug}.repl.co/export/html"
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"🔗 <b>Веб-версия отчета:</b>\n{web_url}",
+                    parse_mode='HTML'
+                )
+            except Exception as e:
+                logging.error(f"Error sending web URL: {e}")
+                
+        except Exception as e:
+            logging.error(f"Error generating HTML report: {e}")
+            await context.bot.send_message(
+                chat_id=user_id,
+                text="❌ <b>Ошибка при создании HTML отчета</b>",
+                parse_mode='HTML'
+            )
     
     elif action == "admin_reset":
         # Подтверждение сброса
