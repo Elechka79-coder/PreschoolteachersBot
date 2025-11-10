@@ -3,6 +3,7 @@ import logging
 import csv
 import io
 import json
+import zipfile
 from datetime import datetime
 from flask import Flask, render_template_string
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -144,185 +145,108 @@ class ResultsStorage:
         
         return output.getvalue()
     
-    def export_to_html_report(self):
-        """Создание интерактивного HTML отчета с графиками"""
-        html_template = """
+    def export_to_simple_html(self):
+        """Создание упрощенного HTML отчета без сложных графиков"""
+        total_answers = sum(sum(stats.values()) for stats in self.results.values())
+        total_participants = len(self.user_info)
+        
+        html_content = f"""
         <!DOCTYPE html>
         <html>
         <head>
             <title>Результаты опроса - Практикум для воспитателей</title>
             <meta charset="utf-8">
-            <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
             <style>
-                body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
-                .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin-bottom: 30px; }
-                .stats-card { background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
-                .question-card { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0; border-left: 4px solid #007bff; }
-                .chart-container { height: 300px; margin: 20px 0; }
-                .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin: 20px 0; }
-                .summary-item { background: white; padding: 15px; border-radius: 8px; text-align: center; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-                .percentage { font-size: 24px; font-weight: bold; color: #007bff; }
+                body {{ font-family: Arial, sans-serif; max-width: 1000px; margin: 0 auto; padding: 20px; }}
+                .header {{ background: #4CAF50; color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; }}
+                .stats-card {{ background: white; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 15px; }}
+                .question-card {{ background: #f8f9fa; padding: 12px; border-radius: 6px; margin: 10px 0; border-left: 4px solid #007bff; }}
+                .summary-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 15px 0; }}
+                .summary-item {{ background: white; padding: 12px; border-radius: 6px; text-align: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }}
+                .percentage {{ font-size: 20px; font-weight: bold; color: #007bff; }}
+                .progress-bar {{ background: #e0e0e0; border-radius: 5px; margin: 5px 0; }}
+                .progress {{ background: #4CAF50; height: 20px; border-radius: 5px; }}
             </style>
         </head>
         <body>
             <div class="header">
                 <h1>📊 Результаты опроса</h1>
-                <p>Практикум для воспитателей - {{ date }}</p>
-                <p>Участников: {{ total_participants }} | Ответов: {{ total_answers }}</p>
+                <p>Практикум для воспитателей - {datetime.now().strftime("%d.%m.%Y %H:%M")}</p>
+                <p>Участников: {total_participants} | Ответов: {total_answers}</p>
             </div>
 
             <div class="summary-grid">
                 <div class="summary-item">
-                    <div class="percentage">{{ total_participants }}</div>
+                    <div class="percentage">{total_participants}</div>
                     <div>Участников</div>
                 </div>
                 <div class="summary-item">
-                    <div class="percentage">{{ total_answers }}</div>
+                    <div class="percentage">{total_answers}</div>
                     <div>Всего ответов</div>
                 </div>
                 <div class="summary-item">
-                    <div class="percentage">{{ completion_rate }}%</div>
-                    <div>Завершили опрос</div>
-                </div>
-                <div class="summary-item">
-                    <div class="percentage">{{ questions_count }}</div>
+                    <div class="percentage">{len(QUESTIONS)}</div>
                     <div>Вопросов</div>
                 </div>
             </div>
-
+        """
+        
+        for i, question in enumerate(QUESTIONS):
+            stats = self.results[i]
+            total = stats["yes"] + stats["no"]
+            yes_percent = (stats["yes"] / total * 100) if total > 0 else 0
+            no_percent = (stats["no"] / total * 100) if total > 0 else 0
+            
+            html_content += f"""
             <div class="stats-card">
-                <h2>📈 Общая статистика по вопросам</h2>
-                <div class="chart-container">
-                    <canvas id="overallChart"></canvas>
-                </div>
-            </div>
-
-            {% for i in range(questions_count) %}
-            <div class="stats-card">
-                <h3>Вопрос {{ i+1 }}</h3>
+                <h3>Вопрос {i+1}</h3>
                 <div class="question-card">
-                    <p><strong>{{ questions[i] }}</strong></p>
+                    <p><strong>{question}</strong></p>
                 </div>
-                <div class="chart-container">
-                    <canvas id="chart{{ i }}"></canvas>
+                <p><strong>Результаты:</strong></p>
+                <p>✅ Да: {stats['yes']} ({yes_percent:.1f}%)</p>
+                <div class="progress-bar">
+                    <div class="progress" style="width: {yes_percent}%"></div>
                 </div>
-                <p><strong>Результаты:</strong> ✅ Да: {{ results[i].yes }} ({{ yes_percents[i] }}%) | ❌ Нет: {{ results[i].no }} ({{ no_percents[i] }}%)</p>
+                <p>❌ Нет: {stats['no']} ({no_percent:.1f}%)</p>
+                <div class="progress-bar">
+                    <div class="progress" style="width: {no_percent}%; background: #f44336;"></div>
+                </div>
+                <p><em>Всего ответов: {total}</em></p>
             </div>
-            {% endfor %}
-
-            <script>
-                // Общая статистика
-                const overallCtx = document.getElementById('overallChart').getContext('2d');
-                new Chart(overallCtx, {
-                    type: 'bar',
-                    data: {
-                        labels: {{ question_numbers|tojson }},
-                        datasets: [
-                            {
-                                label: '✅ Да',
-                                data: {{ yes_data|tojson }},
-                                backgroundColor: '#28a745'
-                            },
-                            {
-                                label: '❌ Нет',
-                                data: {{ no_data|tojson }},
-                                backgroundColor: '#dc3545'
-                            }
-                        ]
-                    },
-                    options: {
-                        responsive: true,
-                        plugins: {
-                            title: {
-                                display: true,
-                                text: 'Распределение ответов по вопросам'
-                            }
-                        },
-                        scales: {
-                            x: {
-                                title: {
-                                    display: true,
-                                    text: 'Номер вопроса'
-                                }
-                            },
-                            y: {
-                                title: {
-                                    display: true,
-                                    text: 'Количество ответов'
-                                },
-                                beginAtZero: true
-                            }
-                        }
-                    }
-                });
-
-                // Графики для каждого вопроса
-                {% for i in range(questions_count) %}
-                const ctx{{ i }} = document.getElementById('chart{{ i }}').getContext('2d');
-                new Chart(ctx{{ i }}, {
-                    type: 'doughnut',
-                    data: {
-                        labels: ['✅ Да ({{ yes_percents[i] }}%)', '❌ Нет ({{ no_percents[i] }}%)'],
-                        datasets: [{
-                            data: [{{ results[i].yes }}, {{ results[i].no }}],
-                            backgroundColor: ['#28a745', '#dc3545']
-                        }]
-                    },
-                    options: {
-                        responsive: true,
-                        plugins: {
-                            legend: {
-                                position: 'bottom'
-                            },
-                            title: {
-                                display: true,
-                                text: 'Вопрос {{ i+1 }}'
-                            }
-                        }
-                    }
-                });
-                {% endfor %}
-            </script>
+            """
+        
+        html_content += """
         </body>
         </html>
         """
         
+        return html_content
+    
+    def export_to_text_report(self):
+        """Создание текстового отчета для отправки в Telegram"""
         total_answers = sum(sum(stats.values()) for stats in self.results.values())
         total_participants = len(self.user_info)
         
-        # Считаем процент завершивших опрос
-        completed_users = sum(1 for user_id in self.user_info if len(self.user_progress.get(user_id, {})) == len(QUESTIONS))
-        completion_rate = (completed_users / total_participants * 100) if total_participants > 0 else 0
+        text = f"📊 ОТЧЕТ ОПРОСА\n"
+        text += f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
+        text += f"Участников: {total_participants}\n"
+        text += f"Всего ответов: {total_answers}\n"
+        text += f"Вопросов: {len(QUESTIONS)}\n\n"
         
-        # Подготавливаем данные для графиков
-        question_numbers = [f"Вопрос {i+1}" for i in range(len(QUESTIONS))]
-        yes_data = [self.results[i]["yes"] for i in range(len(QUESTIONS))]
-        no_data = [self.results[i]["no"] for i in range(len(QUESTIONS))]
+        for i, question in enumerate(QUESTIONS):
+            stats = self.results[i]
+            total = stats["yes"] + stats["no"]
+            yes_percent = (stats["yes"] / total * 100) if total > 0 else 0
+            no_percent = (stats["no"] / total * 100) if total > 0 else 0
+            
+            text += f"ВОПРОС {i+1}:\n"
+            text += f"{question}\n"
+            text += f"✅ Да: {stats['yes']} ({yes_percent:.1f}%)\n"
+            text += f"❌ Нет: {stats['no']} ({no_percent:.1f}%)\n"
+            text += f"Всего: {total}\n\n"
         
-        yes_percents = []
-        no_percents = []
-        for i in range(len(QUESTIONS)):
-            total = self.results[i]["yes"] + self.results[i]["no"]
-            yes_percent = (self.results[i]["yes"] / total * 100) if total > 0 else 0
-            no_percent = (self.results[i]["no"] / total * 100) if total > 0 else 0
-            yes_percents.append(f"{yes_percent:.1f}")
-            no_percents.append(f"{no_percent:.1f}")
-        
-        return render_template_string(
-            html_template,
-            date=datetime.now().strftime("%d.%m.%Y %H:%M"),
-            total_participants=total_participants,
-            total_answers=total_answers,
-            completion_rate=f"{completion_rate:.1f}",
-            questions_count=len(QUESTIONS),
-            questions=QUESTIONS,
-            results=self.results,
-            question_numbers=question_numbers,
-            yes_data=yes_data,
-            no_data=no_data,
-            yes_percents=yes_percents,
-            no_percents=no_percents
-        )
+        return text
 
 results_storage = ResultsStorage()
 
@@ -351,7 +275,7 @@ def home():
         
         <div class="status">
             <p><strong>Статус:</strong> ✅ Активен</p>
-            <p><strong>Версия:</strong> Расширенная с экспортом</p>
+            <p><strong>Версия:</strong> Упрощенная с текстовыми отчетами</p>
             <p><strong>Количество вопросов:</strong> {{ questions_count }}</p>
             <p><strong>Участников:</strong> {{ participants }}</p>
             <p><strong>Всего ответов:</strong> {{ total_answers }}</p>
@@ -362,11 +286,15 @@ def home():
         <div class="export-buttons">
             <a href="/export/html" class="export-btn" target="_blank">
                 <strong>🌐 HTML Отчет</strong><br>
-                Интерактивный отчет с графиками
+                Упрощенный HTML отчет
             </a>
             <a href="/export/csv" class="export-btn" download>
                 <strong>📊 Google Sheets</strong><br>
                 CSV для импорта в таблицы
+            </a>
+            <a href="/export/text" class="export-btn" target="_blank">
+                <strong>📝 Текст</strong><br>
+                Текстовый отчет
             </a>
         </div>
 
@@ -389,8 +317,14 @@ def home():
 @app.route('/export/html')
 def export_html():
     """Экспорт в HTML отчет"""
-    html_content = results_storage.export_to_html_report()
+    html_content = results_storage.export_to_simple_html()
     return html_content
+
+@app.route('/export/text')
+def export_text():
+    """Экспорт в текстовый отчет"""
+    text_content = results_storage.export_to_text_report()
+    return f"<pre>{text_content}</pre>"
 
 @app.route('/export/csv')
 def export_csv():
@@ -433,7 +367,7 @@ def get_admin_keyboard():
     keyboard = [
         [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton("📥 Выгрузить CSV", callback_data="admin_export")],
-        [InlineKeyboardButton("🌐 HTML Отчет", callback_data="admin_html")],
+        [InlineKeyboardButton("📝 Текстовый отчет", callback_data="admin_text")],
         [InlineKeyboardButton("🔄 Сбросить результаты", callback_data="admin_reset")],
         [InlineKeyboardButton("❌ Закрыть", callback_data="admin_close")],
     ]
@@ -657,6 +591,7 @@ async def handle_admin_actions(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             csv_data = results_storage.export_to_csv()
             csv_file = io.BytesIO(csv_data.encode('utf-8'))
+            csv_file.seek(0)
             csv_file.name = f"survey_results_{datetime.now().strftime('%Y%m%d_%H%M')}.csv"
             
             await context.bot.send_document(
@@ -674,39 +609,44 @@ async def handle_admin_actions(update: Update, context: ContextTypes.DEFAULT_TYP
                 parse_mode='HTML'
             )
     
-    elif action == "admin_html":
-        # Создаем HTML отчет и отправляем как файл
+    elif action == "admin_text":
+        # Отправляем текстовый отчет
         try:
-            html_content = results_storage.export_to_html_report()
-            html_file = io.BytesIO(html_content.encode('utf-8'))
-            html_file.name = f"survey_report_{datetime.now().strftime('%Y%m%d_%H%M')}.html"
+            text_report = results_storage.export_to_text_report()
             
-            await context.bot.send_document(
-                chat_id=user_id,
-                document=html_file,
-                filename=html_file.name,
-                caption="🌐 <b>Интерактивный HTML отчет</b>\n\nОткройте в браузере для просмотра графиков.",
-                parse_mode='HTML'
-            )
-            
+            # Если отчет слишком длинный, разбиваем на части
+            if len(text_report) > 4000:
+                parts = [text_report[i:i+4000] for i in range(0, len(text_report), 4000)]
+                for part in parts:
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=f"<pre>{part}</pre>",
+                        parse_mode='HTML'
+                    )
+            else:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=f"<pre>{text_report}</pre>",
+                    parse_mode='HTML'
+                )
+                
             # Также отправляем ссылку на веб-версию
             try:
-                # Получаем URL Replit
                 repl_slug = os.environ.get('REPL_SLUG', 'unknown')
                 web_url = f"https://{repl_slug}.repl.co/export/html"
                 await context.bot.send_message(
                     chat_id=user_id,
-                    text=f"🔗 <b>Веб-версия отчета:</b>\n{web_url}",
+                    text=f"🔗 <b>Веб-версия HTML отчета:</b>\n{web_url}",
                     parse_mode='HTML'
                 )
             except Exception as e:
                 logging.error(f"Error sending web URL: {e}")
                 
         except Exception as e:
-            logging.error(f"Error generating HTML report: {e}")
+            logging.error(f"Error generating text report: {e}")
             await context.bot.send_message(
                 chat_id=user_id,
-                text="❌ <b>Ошибка при создании HTML отчета</b>",
+                text="❌ <b>Ошибка при создании отчета</b>",
                 parse_mode='HTML'
             )
     
