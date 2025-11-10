@@ -1,6 +1,6 @@
-run = "python main.py"
-entrypoint = "main.py"
-module = "main"
+run = "python main_bot.py"
+entrypoint = "main_bot.py"
+module = "main_bot"
 
 [env]
 BOT_TOKEN = "your_bot_token_here"
@@ -13,4 +13,4 @@ requiredFiles = [".replit", "replit.nix"]
 
 [deployment]
 build = ["pip", "install", "-r", "requirements.txt"]
-run = "python main.py"
+run = "python main_bot.py"
