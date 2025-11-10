@@ -18,6 +18,9 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = os.environ.get("ADMIN_ID", "")  # ID администратора через запятую
 PORT = int(os.environ.get("PORT", 5000))
 
+# Получаем список ID администраторов
+admin_ids = [int(x.strip()) for x in ADMIN_ID.split(',')] if ADMIN_ID else []
+
 # Обновленные вопросы согласно уточнению
 QUESTIONS = [
     "Рабочая группа Минпросвещения разработала Программу просвещения по запросу родителей.",
@@ -38,6 +41,10 @@ class ResultsStorage:
         self.user_info = {}      # Информация о пользователях
     
     def add_vote(self, question_id: int, answer: str, user_id: int, username: str = "", first_name: str = ""):
+        # Администраторы не могут участвовать в опросе
+        if user_id in admin_ids:
+            return False
+            
         if question_id in self.results and answer in self.results[question_id]:
             # Обновляем общую статистику
             self.results[question_id][answer] += 1
@@ -58,11 +65,17 @@ class ResultsStorage:
                 "timestamp": datetime.now().isoformat()
             }
             self.user_info[user_id]["last_active"] = datetime.now().isoformat()
+            return True
+        return False
     
     def get_user_progress(self, user_id: int):
         return self.user_progress.get(user_id, {})
     
     def get_next_question(self, user_id: int):
+        # Администраторы не могут участвовать в опросе
+        if user_id in admin_ids:
+            return None
+            
         user_progress = self.get_user_progress(user_id)
         for i in range(len(QUESTIONS)):
             if i not in user_progress:
@@ -70,6 +83,10 @@ class ResultsStorage:
         return None  # Все вопросы пройдены
     
     def get_completion_percentage(self, user_id: int):
+        # Администраторы не могут участвовать в опросе
+        if user_id in admin_ids:
+            return 0
+            
         user_progress = self.get_user_progress(user_id)
         return (len(user_progress) / len(QUESTIONS)) * 100
     
@@ -145,22 +162,26 @@ def home():
             .status { background: #f0f8ff; padding: 20px; border-radius: 10px; }
             .question { margin: 15px 0; padding: 10px; background: #f9f9f9; border-left: 4px solid #4CAF50; }
             .stats { background: #e8f5e8; padding: 15px; border-radius: 8px; margin: 10px 0; }
-            .progress-bar { background: #ddd; border-radius: 5px; margin: 10px 0; }
-            .progress { background: #4CAF50; height: 20px; border-radius: 5px; text-align: center; color: white; line-height: 20px; }
+            .admin-notice { background: #fff3cd; padding: 15px; border-radius: 8px; margin: 10px 0; border-left: 4px solid #ffc107; }
         </style>
     </head>
     <body>
         <h1>🤖 Опрос практикума для воспитателей</h1>
         <div class="status">
             <p><strong>Статус:</strong> ✅ Активен</p>
-            <p><strong>Версия:</strong> Улучшенная 2.0</p>
+            <p><strong>Версия:</strong> Админ-режим</p>
             <p><strong>Количество вопросов:</strong> {{ questions_count }}</p>
             <p><strong>Участников:</strong> {{ participants }}</p>
             <p><strong>Всего ответов:</strong> {{ total_answers }}</p>
             <p><strong>Для начала опроса:</strong> Перейдите в Telegram и напишите боту команду <code>/start</code></p>
         </div>
         
-        {% if admin %}
+        <div class="admin-notice">
+            <h3>👑 Информация для администраторов:</h3>
+            <p>Администраторы не участвуют в опросе, а только управляют статистикой.</p>
+            <p>Используйте команду <code>/admin</code> в Telegram для управления.</p>
+        </div>
+        
         <div class="stats">
             <h3>📊 Общая статистика:</h3>
             {% for i in range(questions_count) %}
@@ -172,13 +193,10 @@ def home():
             </div>
             {% endfor %}
         </div>
-        {% endif %}
     </body>
     </html>
     """
     
-    # Определяем, админ ли смотрит страницу
-    is_admin = True  # Для демонстрации
     total_answers = sum(sum(stats.values()) for stats in results_storage.results.values())
     
     return render_template_string(html, 
@@ -186,8 +204,7 @@ def home():
                                 questions=QUESTIONS,
                                 results=results_storage.results,
                                 participants=len(results_storage.user_info),
-                                total_answers=total_answers,
-                                admin=is_admin)
+                                total_answers=total_answers)
 
 @app.route('/health')
 def health():
@@ -197,14 +214,12 @@ def health():
         "status": "healthy", 
         "questions_count": len(QUESTIONS),
         "participants": len(results_storage.user_info),
-        "total_answers": total_answers
+        "total_answers": total_answers,
+        "admin_ids": admin_ids
     }
 
 def is_admin(user_id: int) -> bool:
     """Проверяет, является ли пользователь администратором"""
-    if not ADMIN_ID:
-        return False
-    admin_ids = [int(x.strip()) for x in ADMIN_ID.split(',')]
     return user_id in admin_ids
 
 def get_question_keyboard(question_id: int):
@@ -248,6 +263,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
     
+    # Проверяем, является ли пользователь администратором
+    if is_admin(user_id):
+        admin_text = (
+            "👑 <b>Панель администратора</b>\n\n"
+            "Вы являетесь администратором этого бота. "
+            "Администраторы не участвуют в опросе, а только управляют статистикой.\n\n"
+            "Используйте команду /admin для просмотра статистики и управления опросом."
+        )
+        await update.message.reply_text(admin_text, parse_mode='HTML')
+        return
+    
     # Проверяем прогресс пользователя
     completed = len(results_storage.get_user_progress(user_id))
     progress = results_storage.get_completion_percentage(user_id)
@@ -257,12 +283,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"<i>Ваш прогресс: {completed}/{len(QUESTIONS)} вопросов ({progress:.0f}%)</i>\n\n"
         "Ответьте на вопросы, используя кнопки ниже.\n"
         "После ответа на вопрос автоматически появится следующий.\n\n"
+        "<i>Статистика доступна только администраторам</i>"
     )
-    
-    if is_admin(user_id):
-        welcome_text += "👑 <b>Вы администратор</b> - используйте /admin для управления\n\n"
-    
-    welcome_text += "<i>Статистика доступна только администраторам</i>"
     
     await update.message.reply_text(
         welcome_text,
@@ -285,6 +307,10 @@ async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE, ques
     """Отправляет вопрос пользователю"""
     user_id = update.effective_user.id
     
+    # Администраторы не могут участвовать в опросе
+    if is_admin(user_id):
+        return
+    
     question_text = get_question_text(question_id, user_id, show_stats=False)
     
     # Для callback query редактируем сообщение, для нового - отправляем
@@ -306,6 +332,12 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user = update.effective_user
     user_id = user.id
+    
+    # Администраторы не могут участвовать в опросе
+    if is_admin(user_id):
+        await query.answer("❌ Администраторы не могут участвовать в опросе.", show_alert=True)
+        return
+        
     await query.answer()
     
     data = query.data
@@ -313,7 +345,11 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = data.split("_")[1]
     
     # Обновляем результаты
-    results_storage.add_vote(question_id, answer, user_id, user.username, user.first_name)
+    success = results_storage.add_vote(question_id, answer, user_id, user.username, user.first_name)
+    
+    if not success:
+        await query.answer("❌ Произошла ошибка при сохранении ответа.", show_alert=True)
+        return
     
     # Показываем подтверждение ответа
     confirmation_text = f"<b>Вопрос {question_id + 1}/{len(QUESTIONS)}:</b>\n{QUESTIONS[question_id]}\n\n"
@@ -323,17 +359,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     completed = len(results_storage.get_user_progress(user_id))
     progress = results_storage.get_completion_percentage(user_id)
     confirmation_text += f"\n\n📈 <b>Прогресс:</b> {completed}/{len(QUESTIONS)} ({progress:.0f}%)"
-    
-    if is_admin(user_id):
-        # Показываем статистику админу
-        stats = results_storage.results[question_id]
-        total = stats["yes"] + stats["no"]
-        yes_percent = (stats["yes"] / total * 100) if total > 0 else 0
-        no_percent = (stats["no"] / total * 100) if total > 0 else 0
-        
-        confirmation_text += f"\n\n📊 <b>Статистика:</b>\n"
-        confirmation_text += f"✅ Да: {stats['yes']} ({yes_percent:.1f}%)\n"
-        confirmation_text += f"❌ Нет: {stats['no']} ({no_percent:.1f}%)"
     
     await query.edit_message_text(
         text=confirmation_text,
@@ -356,9 +381,6 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Спасибо за ваше время и участие. "
             "Ваши ответы помогут улучшить образовательный процесс."
         )
-        
-        if is_admin(user_id):
-            completion_text += "\n\n👑 <b>Вы администратор</b> - используйте /admin для просмотра статистики"
         
         await context.bot.send_message(
             chat_id=user_id,
@@ -480,6 +502,17 @@ async def handle_admin_actions(update: Update, context: ContextTypes.DEFAULT_TYP
 async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показывает прогресс пользователя"""
     user_id = update.effective_user.id
+    
+    # Администраторы не могут участвовать в опросе
+    if is_admin(user_id):
+        await update.message.reply_text(
+            "👑 <b>Вы администратор</b>\n\n"
+            "Администраторы не участвуют в опросе, а только управляют статистикой.\n"
+            "Используйте команду /admin для просмотра статистики.",
+            parse_mode='HTML'
+        )
+        return
+    
     completed = len(results_storage.get_user_progress(user_id))
     progress = results_storage.get_completion_percentage(user_id)
     
@@ -491,6 +524,7 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if completed == len(QUESTIONS):
         progress_text += "🎉 Вы ответили на все вопросы опроса!"
+        await update.message.reply_text(progress_text, parse_mode='HTML')
     else:
         next_question = results_storage.get_next_question(user_id)
         progress_text += f"Следующий вопрос: {next_question + 1}/{len(QUESTIONS)}"
@@ -502,14 +536,17 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='HTML'
         )
-        return
-    
-    await update.message.reply_text(progress_text, parse_mode='HTML')
 
 async def handle_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает продолжение опроса"""
     query = update.callback_query
     user_id = update.effective_user.id
+    
+    # Администраторы не могут участвовать в опросе
+    if is_admin(user_id):
+        await query.answer("❌ Администраторы не могут участвовать в опросе.", show_alert=True)
+        return
+        
     await query.answer()
     
     # Получаем номер вопроса из callback_data
@@ -540,6 +577,7 @@ def main():
     
     # Запускаем бота
     logging.info("Бот запускается...")
+    logging.info(f"Администраторы: {admin_ids}")
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
