@@ -169,7 +169,7 @@ def home():
         <h1>🤖 Опрос практикума для воспитателей</h1>
         <div class="status">
             <p><strong>Статус:</strong> ✅ Активен</p>
-            <p><strong>Версия:</strong> Админ-режим</p>
+            <p><strong>Версия:</strong> С фиксацией ответов</p>
             <p><strong>Количество вопросов:</strong> {{ questions_count }}</p>
             <p><strong>Участников:</strong> {{ participants }}</p>
             <p><strong>Всего ответов:</strong> {{ total_answers }}</p>
@@ -240,21 +240,38 @@ def get_admin_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-def get_question_text(question_id: int, user_id: int, show_stats: bool = False):
+def get_continue_keyboard(next_question_id: int):
+    """Клавиатура для продолжения опроса"""
+    keyboard = [
+        [InlineKeyboardButton("➡️ Следующий вопрос", callback_data=f"continue_{next_question_id}")],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+def get_question_text(question_id: int, user_id: int):
     """Форматирует текст вопроса"""
     progress = results_storage.get_completion_percentage(user_id)
-    text = f"<b>Вопрос {question_id + 1}/{len(QUESTIONS)}</b> ({progress:.0f}% завершено)\n\n{QUESTIONS[question_id]}"
+    completed = len(results_storage.get_user_progress(user_id))
     
-    if show_stats and is_admin(user_id):
-        stats = results_storage.results[question_id]
-        total = stats["yes"] + stats["no"]
-        yes_percent = (stats["yes"] / total * 100) if total > 0 else 0
-        no_percent = (stats["no"] / total * 100) if total > 0 else 0
-        
-        text += f"\n\n📊 <b>Статистика:</b>\n"
-        text += f"✅ Да: {stats['yes']} ({yes_percent:.1f}%)\n"
-        text += f"❌ Нет: {stats['no']} ({no_percent:.1f}%)\n"
-        text += f"👥 Всего: {total}"
+    text = (
+        f"<b>Вопрос {question_id + 1}/{len(QUESTIONS)}</b>\n\n"
+        f"{QUESTIONS[question_id]}\n\n"
+        f"📊 <b>Прогресс:</b> {completed}/{len(QUESTIONS)} ({progress:.0f}%)"
+    )
+    
+    return text
+
+def get_answer_confirmation_text(question_id: int, answer: str, user_id: int):
+    """Форматирует текст подтверждения ответа"""
+    answer_text = "✅ Да" if answer == "yes" else "❌ Нет"
+    progress = results_storage.get_completion_percentage(user_id)
+    completed = len(results_storage.get_user_progress(user_id))
+    
+    text = (
+        f"<b>Вопрос {question_id + 1}/{len(QUESTIONS)}</b>\n\n"
+        f"{QUESTIONS[question_id]}\n\n"
+        f"<b>Ваш ответ:</b> {answer_text}\n\n"
+        f"📈 <b>Прогресс:</b> {completed}/{len(QUESTIONS)} ({progress:.0f}%)"
+    )
     
     return text
 
@@ -282,7 +299,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📝 <b>Опрос практикума для воспитателей</b>\n\n"
         f"<i>Ваш прогресс: {completed}/{len(QUESTIONS)} вопросов ({progress:.0f}%)</i>\n\n"
         "Ответьте на вопросы, используя кнопки ниже.\n"
-        "После ответа на вопрос автоматически появится следующий.\n\n"
+        "После ответа на вопрос в чате останется сообщение с вашим ответом.\n\n"
         "<i>Статистика доступна только администраторам</i>"
     )
     
@@ -301,31 +318,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    await send_question(update, context, next_question)
-
-async def send_question(update: Update, context: ContextTypes.DEFAULT_TYPE, question_id: int):
-    """Отправляет вопрос пользователю"""
-    user_id = update.effective_user.id
-    
-    # Администраторы не могут участвовать в опросе
-    if is_admin(user_id):
-        return
-    
-    question_text = get_question_text(question_id, user_id, show_stats=False)
-    
-    # Для callback query редактируем сообщение, для нового - отправляем
-    if hasattr(update, 'callback_query') and update.callback_query:
-        await update.callback_query.edit_message_text(
-            text=question_text,
-            reply_markup=get_question_keyboard(question_id),
-            parse_mode='HTML'
-        )
-    else:
-        await update.message.reply_text(
-            text=question_text,
-            reply_markup=get_question_keyboard(question_id),
-            parse_mode='HTML'
-        )
+    # Отправляем первый вопрос
+    question_text = get_question_text(next_question, user_id)
+    await update.message.reply_text(
+        text=question_text,
+        reply_markup=get_question_keyboard(next_question),
+        parse_mode='HTML'
+    )
 
 async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обрабатывает нажатия кнопок"""
@@ -351,16 +350,13 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Произошла ошибка при сохранении ответа.", show_alert=True)
         return
     
-    # Показываем подтверждение ответа
-    confirmation_text = f"<b>Вопрос {question_id + 1}/{len(QUESTIONS)}:</b>\n{QUESTIONS[question_id]}\n\n"
-    confirmation_text += "✅ <b>Ваш ответ принят!</b>"
+    # Удаляем сообщение с вопросом (чтобы не было дублирования)
+    await query.delete_message()
     
-    # Показываем прогресс
-    completed = len(results_storage.get_user_progress(user_id))
-    progress = results_storage.get_completion_percentage(user_id)
-    confirmation_text += f"\n\n📈 <b>Прогресс:</b> {completed}/{len(QUESTIONS)} ({progress:.0f}%)"
-    
-    await query.edit_message_text(
+    # Отправляем сообщение с подтверждением ответа (фиксируем ответ в чате)
+    confirmation_text = get_answer_confirmation_text(question_id, answer, user_id)
+    await context.bot.send_message(
+        chat_id=user_id,
         text=confirmation_text,
         parse_mode='HTML'
     )
@@ -373,7 +369,13 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         import asyncio
         await asyncio.sleep(1)
         
-        await send_question(update, context, next_question)
+        question_text = get_question_text(next_question, user_id)
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=question_text,
+            reply_markup=get_question_keyboard(next_question),
+            parse_mode='HTML'
+        )
     else:
         # Все вопросы пройдены
         completion_text = (
@@ -530,10 +532,9 @@ async def progress_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         progress_text += f"Следующий вопрос: {next_question + 1}/{len(QUESTIONS)}"
         
         # Кнопка для продолжения
-        keyboard = [[InlineKeyboardButton("➡️ Продолжить опрос", callback_data=f"continue_{next_question}")]]
         await update.message.reply_text(
             progress_text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
+            reply_markup=get_continue_keyboard(next_question),
             parse_mode='HTML'
         )
 
@@ -551,7 +552,18 @@ async def handle_continue(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Получаем номер вопроса из callback_data
     question_id = int(query.data.split("_")[1])
-    await send_question(update, context, question_id)
+    
+    # Удаляем сообщение с прогрессом
+    await query.delete_message()
+    
+    # Отправляем вопрос
+    question_text = get_question_text(question_id, user_id)
+    await context.bot.send_message(
+        chat_id=user_id,
+        text=question_text,
+        reply_markup=get_question_keyboard(question_id),
+        parse_mode='HTML'
+    )
 
 async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик ошибок"""
