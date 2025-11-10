@@ -1,16 +1,12 @@
 run = "python main_bot.py"
 entrypoint = "main_bot.py"
-module = "main_bot"
 
 [env]
 BOT_TOKEN = "your_bot_token_here"
+ADMIN_ID = "your_telegram_id_here"
 
 [nix]
 channel = "stable-22_11"
 
-[gitHubImport]
-requiredFiles = [".replit", "replit.nix"]
-
 [deployment]
-build = ["pip", "install", "-r", "requirements.txt"]
 run = "python main_bot.py"
