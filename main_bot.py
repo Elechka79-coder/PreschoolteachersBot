@@ -388,7 +388,7 @@ class ResultsStorage:
         total_answers = sum(sum(stats.values()) for stats in self.results.values())
         total_participants = len(self.user_info)
         
-        text = f"📊 ОТЧЕТ ОПРОСА С ЭТАЛОННЫМИ ОТВЕТАМИ\n"
+        text = f"📊 ДЕТАЛЬНЫЙ ОТЧЕТ ОПРОСА С ЭТАЛОННЫМИ ОТВЕТАМИ\n"
         text += f"Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}\n"
         text += f"Участников: {total_participants}\n"
         text += f"Всего ответов: {total_answers}\n"
@@ -408,17 +408,49 @@ class ResultsStorage:
             correct_percent = (correct_count / total * 100) if total > 0 else 0
             total_correct_percent += correct_percent
             
-            text += f"ВОПРОС {i+1}:\n"
-            text += f"{question}\n"
-            text += f"✅ Да: {stats['yes']} ({yes_percent:.1f}%)\n"
-            text += f"❌ Нет: {stats['no']} ({no_percent:.1f}%)\n"
-            text += f"📗 Правильный ответ: {correct_answer}\n"
-            text += f"🎯 Правильных ответов: {correct_count} ({correct_percent:.1f}%)\n"
-            text += f"📊 Всего ответов: {total}\n\n"
+            # Определяем "успешность" вопроса
+            if correct_percent >= 80:
+                success_icon = "🎯"
+            elif correct_percent >= 60:
+                success_icon = "👍"
+            elif correct_percent >= 40:
+                success_icon = "😐"
+            else:
+                success_icon = "⚠️"
+            
+            text += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            text += f"ВОПРОС {i+1} {success_icon}\n"
+            text += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            text += f"{question}\n\n"
+            text += f"📊 Результаты:\n"
+            text += f"   ✅ Да: {stats['yes']} ({yes_percent:.1f}%)\n"
+            text += f"   ❌ Нет: {stats['no']} ({no_percent:.1f}%)\n"
+            text += f"   👥 Всего ответов: {total}\n\n"
+            text += f"🎯 Эталонный ответ: {correct_answer}\n"
+            text += f"📗 Правильных ответов: {correct_count} ({correct_percent:.1f}%)\n\n"
         
         # Средний процент правильных ответов
         avg_correct_percent = total_correct_percent / len(QUESTIONS) if len(QUESTIONS) > 0 else 0
-        text += f"📈 СРЕДНИЙ ПРОЦЕНТ ПРАВИЛЬНЫХ ОТВЕТОВ: {avg_correct_percent:.1f}%\n"
+        
+        # Оценка общего результата
+        if avg_correct_percent >= 80:
+            overall_rating = "ОТЛИЧНО"
+            rating_icon = "🏆"
+        elif avg_correct_percent >= 60:
+            overall_rating = "ХОРОШО"
+            rating_icon = "⭐"
+        elif avg_correct_percent >= 40:
+            overall_rating = "УДОВЛЕТВОРИТЕЛЬНО"
+            rating_icon = "📊"
+        else:
+            overall_rating = "НИЗКИЙ РЕЗУЛЬТАТ"
+            rating_icon = "📉"
+        
+        text += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        text += f"📈 ИТОГОВАЯ СТАТИСТИКА {rating_icon}\n"
+        text += f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        text += f"Средний процент правильных ответов: {avg_correct_percent:.1f}%\n"
+        text += f"Общая оценка: {overall_rating}\n"
         
         return text
 
@@ -810,30 +842,26 @@ async def handle_admin_actions(update: Update, context: ContextTypes.DEFAULT_TYP
             # Если отчет слишком длинный, разбиваем на части
             if len(text_report) > 4000:
                 parts = [text_report[i:i+4000] for i in range(0, len(text_report), 4000)]
-                for part in parts:
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=f"<pre>{part}</pre>",
-                        parse_mode='HTML'
-                    )
+                for i, part in enumerate(parts):
+                    if i == 0:
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=f"<pre>{part}</pre>",
+                            parse_mode='HTML'
+                        )
+                    else:
+                        # Для последующих частей добавляем заголовок продолжения
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=f"<pre>📋 ПРОДОЛЖЕНИЕ ОТЧЕТА:\n\n{part}</pre>",
+                            parse_mode='HTML'
+                        )
             else:
                 await context.bot.send_message(
                     chat_id=user_id,
                     text=f"<pre>{text_report}</pre>",
                     parse_mode='HTML'
                 )
-                
-            # Также отправляем ссылку на веб-версию
-            try:
-                repl_slug = os.environ.get('REPL_SLUG', 'unknown')
-                web_url = f"https://{repl_slug}.repl.co/export/html"
-                await context.bot.send_message(
-                    chat_id=user_id,
-                    text=f"🔗 <b>Веб-версия HTML отчета:</b>\n{web_url}",
-                    parse_mode='HTML'
-                )
-            except Exception as e:
-                logging.error(f"Error sending web URL: {e}")
                 
         except Exception as e:
             logging.error(f"Error generating text report: {e}")
