@@ -56,6 +56,7 @@ def home():
         <h1>🤖 Бот для интерактивного опроса</h1>
         <div class="status">
             <p><strong>Статус:</strong> ✅ Активен</p>
+            <p><strong>Основной файл:</strong> main_bot.py</p>
             <p><strong>Количество вопросов:</strong> {{ questions_count }}</p>
             <p><strong>Для начала опроса:</strong> Перейдите в Telegram и напишите боту команду <code>/start</code></p>
         </div>
@@ -66,6 +67,11 @@ def home():
             <p><strong>Вопрос {{ i+1 }}:</strong> {{ question }}</p>
         </div>
         {% endfor %}
+        
+        <div class="status">
+            <p><strong>GitHub репозиторий:</strong> Публичный</p>
+            <p><strong>Размещение:</strong> Replit</p>
+        </div>
     </body>
     </html>
     """
@@ -170,7 +176,7 @@ def main():
     application.add_error_handler(error_handler)
     
     # Запускаем бота
-    logging.info("Бот запускается...")
+    logging.info("Бот запускается из main_bot.py...")
     application.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
